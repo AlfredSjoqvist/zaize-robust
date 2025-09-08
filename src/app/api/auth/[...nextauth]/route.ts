@@ -1,30 +1,12 @@
-import NextAuth from "next-auth";
-import Google from "next-auth/providers/google";
-import { PrismaAdapter } from "@next-auth/prisma-adapter";
-import { prisma } from "@/lib/prisma";
+// Force Node runtime (Prisma cannot run on Edge)
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-const handler = NextAuth({
-  adapter: PrismaAdapter(prisma),
-  providers: [
-    Google({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-    }),
-  ],
-  session: { strategy: "jwt" },
-  callbacks: {
-    async session({ session, token }) {
-      if (session.user && token.sub) {
-        (session.user as any).id = token.sub;
-      }
-      return session;
-    },
-  },
-  debug: true,
-  events: {
-    error(message) { console.error("nextauth error", message); },
-    signIn(message) { console.log("signIn event", message); },
-  },
-});
+import NextAuth from "next-auth";
+import { authOptions } from "@/server/auth";
+
+// Optional: export options so you can reuse with getServerSession later
+
+const handler = NextAuth(authOptions);
 
 export { handler as GET, handler as POST };
