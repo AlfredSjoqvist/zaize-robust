@@ -1,73 +1,52 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 
-type Img = {
-  id: string;
-  url: string;
-  primary: boolean;
-  width?: number;
-  height?: number;
-  bytes?: number;
-};
+type Img = { id: string; url: string; primary: boolean; bytes?: number };
 
 export default function Gallery() {
   const [images, setImages] = useState<Img[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const router = useRouter();
 
   async function load() {
     const r = await fetch("/api/images/full-body", { cache: "no-store" });
-    const data = await r.json();
-    setImages(data);
+    setImages(await r.json());
   }
-
   useEffect(() => { load(); }, []);
 
-  async function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function pick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    setLoading(true);
+    setBusy(true);
     try {
-      // 1) presign
-      const ext = file.name.split(".").pop()?.toLowerCase() === "png" ? "png" : "jpg";
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
       const presign = await fetch("/api/uploads/presign", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ext, kind: "full_body", contentType: file.type }),
       }).then(r => r.json());
 
-      // 2) upload to S3/R2
-      await fetch(presign.url, { method: "PUT", body: file });
-
-      // 3) create DB row (build a public URL; use CDN_BASE if set server-side by your API)
-      const publicUrl = process.env.NEXT_PUBLIC_CDN_BASE_URL
-        ? `${process.env.NEXT_PUBLIC_CDN_BASE_URL}/${presign.key}`
-        : (presign.publicUrl || `/${presign.key}`); // if you add publicUrl in presign, prefer that
+      await fetch(presign.url, { method: "PUT", body: file }); // upload to R2
 
       await fetch("/api/images/full-body", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           key: presign.key,
-          url: publicUrl,
-          width: undefined,
-          height: undefined,
+          url: presign.publicUrl,
           bytes: file.size,
         }),
       });
 
       await load();
     } finally {
-      setLoading(false);
+      setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   }
 
-  async function setPrimary(id: string) {
+  async function select(id: string) {
     await fetch("/api/images/full-body/select", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -76,26 +55,57 @@ export default function Gallery() {
     await load();
   }
 
+  async function remove(id: string) {
+    const ok = confirm("Delete this picture? This cannot be undone.");
+    if (!ok) return;
+
+    // optimistic UI
+    const prev = images;
+    setImages(prev => prev.filter(i => i.id !== id));
+
+    const res = await fetch(`/api/images/full-body/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      // revert on failure
+      setImages(prev);
+      alert("Failed to delete image. Please try again.");
+    }
+  }
+
   return (
     <div>
-      {/* Grid: uploaded images + add tile always present */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
         {images.map(img => (
-          <button
+          <div
             key={img.id}
-            onClick={() => setPrimary(img.id)}
-            className={`group relative aspect-[3/4] rounded-2xl border ${img.primary ? "border-black" : "border-black/10"} overflow-hidden`}
-            title={img.primary ? "Selected" : "Click to select"}
+            className={`group relative aspect-[3/4] rounded-2xl overflow-hidden border
+              ${img.primary ? "border-black" : "border-black/10"}`}
           >
-            <img
-              src={img.url}
-              alt=""
-              className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
-            />
-            {img.primary && (
-              <div className="absolute inset-2 rounded-xl ring-2 ring-black pointer-events-none" />
-            )}
-          </button>
+            <button
+              onClick={() => select(img.id)}
+              className="absolute inset-0"
+              title={img.primary ? "Selected" : "Click to select"}
+            >
+              <img src={img.url} alt="" className="w-full h-full object-cover" />
+              {img.primary && (
+                <div className="absolute inset-2 rounded-xl ring-2 ring-black pointer-events-none" />
+              )}
+            </button>
+
+            {/* Trash button (bottom-right) */}
+            <button
+              onClick={(e) => { e.stopPropagation(); remove(img.id); }}
+              className="absolute bottom-2 right-2 rounded-lg bg-white/90 border border-black/10
+                         px-2 py-1 text-xs text-black/80 shadow
+                         opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Delete"
+            >
+              {/* tiny trash icon (SVG) */}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M9 3h6m-9 4h12m-10 0v12m6-12v12M5 7l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"
+                      stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
         ))}
 
         {/* Add tile */}
@@ -107,13 +117,12 @@ export default function Gallery() {
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={onPickFile}
-            disabled={loading}
+            onChange={pick}
+            disabled={busy}
           />
         </label>
       </div>
 
-      {/* “Continue without pictures” link (optional) */}
       <div className="text-center mt-6">
         <button className="px-4 py-2 rounded-xl border border-black/10 hover:bg-black/5">
           Create account without pictures
