@@ -18,6 +18,7 @@ model User {
 
   accounts Account[]
   sessions Session[]
+  Image    Image[]
 }
 
 model Account {
@@ -54,4 +55,21 @@ model VerificationToken {
   expires    DateTime
 
   @@id([identifier, token])
+}
+
+model Image {
+  id        String   @id @default(cuid())
+  userId    String
+  kind      String // "full_body" (you can reuse for other kinds later)
+  bucketKey String // path in your bucket: users/<uid>/<uuid>.jpg
+  url       String // CDN/public URL for display
+  width     Int?
+  height    Int?
+  bytes     Int?
+  primary   Boolean  @default(false) // highlighted/selected
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
 }
