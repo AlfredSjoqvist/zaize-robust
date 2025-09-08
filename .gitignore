@@ -1,0 +1,13 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+.vercel/
+pnpm-lock.yaml # keep this tracked (remove this line if you want it tracked)
+# Env & local
+.env
+.env.*
+!.env.example
+# OS/editor
+.DS_Store
+*.log
