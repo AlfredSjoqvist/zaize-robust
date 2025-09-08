@@ -1,6 +1,23 @@
+// src/app/studio/full-body/page.tsx
+import { getServerSession, type Session } from "next-auth";
+import { redirect } from "next/navigation";
+import { authOptions } from "@/server/auth";
 import Gallery from "./ui/Gallery";
 
-export default function FullBodyPage() {
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export default async function FullBodyPage() {
+  // Tell TS what we expect back
+  const session = (await getServerSession(authOptions)) as Session | null;
+
+  // Not logged in? Send to Google sign-in, then back here
+  if (!session?.user) {
+    redirect(
+      `/api/auth/signin/google?callbackUrl=${encodeURIComponent("/studio/full-body")}`
+    );
+  }
+
   return (
     <div className="max-w-3xl">
       <div className="mx-auto text-center mb-6">
