@@ -11,3 +11,5 @@ pnpm-lock.yaml # keep this tracked (remove this line if you want it tracked)
 # OS/editor
 .DS_Store
 *.log
+
+/generated/prisma
