@@ -2,7 +2,8 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { clsx } from "clsx";
+import clsx from "clsx";
+
 
 export function NavBar() {
   const pathname = usePathname();
