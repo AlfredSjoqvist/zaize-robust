@@ -20,6 +20,11 @@ const handler = NextAuth({
       return session;
     },
   },
+  debug: true,
+  events: {
+    error(message) { console.error("nextauth error", message); },
+    signIn(message) { console.log("signIn event", message); },
+  },
 });
 
 export { handler as GET, handler as POST };
