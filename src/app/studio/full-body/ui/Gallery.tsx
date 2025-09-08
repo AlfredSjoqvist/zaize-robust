@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 
 type Img = { id: string; url: string; primary: boolean; bytes?: number };
@@ -11,7 +10,10 @@ export default function Gallery() {
 
   async function load() {
     const r = await fetch("/api/images/full-body", { cache: "no-store" });
-    setImages(await r.json());
+    const data: Img[] = await r.json();
+    // keep primary first for consistency
+    data.sort((a, b) => (Number(b.primary) - Number(a.primary)) || (a.id > b.id ? -1 : 1));
+    setImages(data);
   }
   useEffect(() => { load(); }, []);
 
@@ -27,7 +29,7 @@ export default function Gallery() {
         body: JSON.stringify({ ext, kind: "full_body", contentType: file.type }),
       }).then(r => r.json());
 
-      await fetch(presign.url, { method: "PUT", body: file }); // upload to R2
+      await fetch(presign.url, { method: "PUT", body: file });
 
       await fetch("/api/images/full-body", {
         method: "POST",
@@ -46,26 +48,40 @@ export default function Gallery() {
     }
   }
 
+  // OPTIMISTIC SELECT
   async function select(id: string) {
-    await fetch("/api/images/full-body/select", {
+    // optimistic update (instant ring + reorder)
+    const prev = images;
+    const optimistic = prev.map(i => ({ ...i, primary: i.id === id }));
+    optimistic.sort((a, b) => (Number(b.primary) - Number(a.primary)) || (a.id > b.id ? -1 : 1));
+    setImages(optimistic);
+
+    const res = await fetch("/api/images/full-body/select", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id }),
     });
-    await load();
+
+    if (!res.ok) {
+      // revert on failure
+      setImages(prev);
+      alert("Could not set as selected. Please try again.");
+      return;
+    }
+
+    // optional confirm / light re-sync (keeps it snappy even if network is slow)
+    // await load();
   }
 
   async function remove(id: string) {
     const ok = confirm("Delete this picture? This cannot be undone.");
     if (!ok) return;
 
-    // optimistic UI
     const prev = images;
-    setImages(prev => prev.filter(i => i.id !== id));
+    setImages(prev.filter(i => i.id !== id));
 
     const res = await fetch(`/api/images/full-body/${id}`, { method: "DELETE" });
     if (!res.ok) {
-      // revert on failure
       setImages(prev);
       alert("Failed to delete image. Please try again.");
     }
@@ -80,18 +96,20 @@ export default function Gallery() {
             className={`group relative aspect-[3/4] rounded-2xl overflow-hidden border
               ${img.primary ? "border-black" : "border-black/10"}`}
           >
-            <button
+            {/* Make the whole tile clickable for selection */}
+            <div
+              role="button"
+              aria-pressed={img.primary}
               onClick={() => select(img.id)}
               className="absolute inset-0"
               title={img.primary ? "Selected" : "Click to select"}
-            >
-              <img src={img.url} alt="" className="w-full h-full object-cover" />
-              {img.primary && (
-                <div className="absolute inset-2 rounded-xl ring-2 ring-black pointer-events-none" />
-              )}
-            </button>
+            />
+            <img src={img.url} alt="" className="w-full h-full object-cover pointer-events-none" />
+            {img.primary && (
+              <div className="absolute inset-2 rounded-xl ring-2 ring-black pointer-events-none" />
+            )}
 
-            {/* Trash button (bottom-right) */}
+            {/* Trash button (stops click from bubbling to selection) */}
             <button
               onClick={(e) => { e.stopPropagation(); remove(img.id); }}
               className="absolute bottom-2 right-2 rounded-lg bg-white/90 border border-black/10
@@ -99,9 +117,8 @@ export default function Gallery() {
                          opacity-0 group-hover:opacity-100 transition-opacity"
               title="Delete"
             >
-              {/* tiny trash icon (SVG) */}
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M9 3h6m-9 4h12m-10 0v12m6-12v12M5 7l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"
+                <path d="M9 3h6M5 7h14M9 7v12m6-12v12M5 7l1 14a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2l1-14"
                       stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
               </svg>
             </button>
@@ -121,12 +138,6 @@ export default function Gallery() {
             disabled={busy}
           />
         </label>
-      </div>
-
-      <div className="text-center mt-6">
-        <button className="px-4 py-2 rounded-xl border border-black/10 hover:bg-black/5">
-          Create account without pictures
-        </button>
       </div>
     </div>
   );
