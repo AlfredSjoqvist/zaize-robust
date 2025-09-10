@@ -89,4 +89,8 @@ model TryOnResult {
   error       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([apiJobId])
+  @@index([modelHash, garmentHash])
 }
