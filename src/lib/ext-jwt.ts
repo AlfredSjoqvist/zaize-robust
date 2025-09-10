@@ -11,7 +11,7 @@ export type ExtClaims = JWTPayload & {
   aud: "zaize-extension";
 };
 
-export async function signExtToken(userId: string, ttlSeconds = 600) {
+export async function signExtToken(userId: string, ttlSeconds = 1200) {
   return await new SignJWT({ scope: "read:highlighted" satisfies ExtScope })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(userId)
