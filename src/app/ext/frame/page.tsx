@@ -5,9 +5,11 @@ import { signExtJwt } from "@/lib/extAuth";
 
 export const dynamic = "force-dynamic";
 
-// Single source of truth for where we postMessage back to:
-const TARGET_ORIGIN =
-  process.env.NEXT_PUBLIC_BASE_ORIGIN || "https://zaize-robust.vercel.app";
+// Use the PARENT origin (bjornborg.com, etc.). If unknown, fall back to "*".
+const parentOrigin =
+  typeof document !== "undefined" && document.referrer
+    ? new URL(document.referrer).origin
+    : "*";
 
 // Narrow session type so TS allows user.id
 type SafeSession = { user?: { id?: string | null } } | null;
@@ -18,8 +20,8 @@ export default async function Page() {
   // Default: tell parent we have no session
   let script = `
     try {
-      console.debug("[ZAIZE:/ext/frame] no session, posting zaize-no-session to", "${TARGET_ORIGIN}");
-      parent.postMessage({ type: "zaize-no-session" }, "${TARGET_ORIGIN}");
+      console.debug("[ZAIZE:/ext/frame] no session, posting zaize-no-session to", "${parentOrigin}");
+      parent.postMessage({ type: "zaize-no-session" }, "${parentOrigin}");
     } catch {}
   `;
 
@@ -41,12 +43,12 @@ export default async function Page() {
               highlightedUrl = j?.image?.url || null;
             }
           } catch {}
-          console.debug("[ZAIZE:/ext/frame] posting zaize-token to", "${TARGET_ORIGIN}", { hasHighlighted: !!highlightedUrl });
-          parent.postMessage({ type: "zaize-token", token, highlightedUrl }, "${TARGET_ORIGIN}");
+          console.debug("[ZAIZE:/ext/frame] posting zaize-token to", "${parentOrigin}", { hasHighlighted: !!highlightedUrl });
+          parent.postMessage({ type: "zaize-token", token, highlightedUrl }, "${parentOrigin}");
         } catch {
           try {
-            console.debug("[ZAIZE:/ext/frame] error, posting zaize-no-session to", "${TARGET_ORIGIN}");
-            parent.postMessage({ type: "zaize-no-session" }, "${TARGET_ORIGIN}");
+            console.debug("[ZAIZE:/ext/frame] error, posting zaize-no-session to", "${parentOrigin}");
+            parent.postMessage({ type: "zaize-no-session" }, "${parentOrigin}");
           } catch {}
         }
       })();
