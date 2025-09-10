@@ -1,10 +1,11 @@
 //src/app/api/tryon/route.ts
+
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyExtToken } from "@/lib/ext-jwt";
-import { normalizeUrl, sha256Hex } from "@/lib/hash";
+import { createHash } from "crypto";
 
 const FASHN_API = "https://api.fashn.ai/v1";
 const FASHN_KEY = process.env.FASHN_API_KEY;
@@ -32,21 +33,33 @@ type Body = {
   mode?: "balanced" | "fast" | "high-quality";
 };
 
+const sha256Hex = (s: string) => createHash("sha256").update(s).digest("hex");
+const normalize = (u: string) => u.trim();
+
 export async function POST(req: Request) {
   try {
     if (!FASHN_KEY) {
       return withCors(
         req,
-        NextResponse.json({ error: "missing_env", message: "FASHN_API_KEY not set" }, { status: 500 })
+        NextResponse.json(
+          { error: "missing_env", message: "FASHN_API_KEY is not set on the server" },
+          { status: 500 }
+        )
       );
     }
 
+    // MVP auth: use extension token if present; if invalid, still continue
     const auth = req.headers.get("authorization") || "";
+    let userId: string | null = null;
     const m = auth.match(/^Bearer\s+(.+)$/i);
-    if (!m) return withCors(req, NextResponse.json({ error: "missing_bearer" }, { status: 401 }));
-
-    const claims = await verifyExtToken(m[1]);
-    if (!claims) return withCors(req, NextResponse.json({ error: "invalid_token" }, { status: 401 }));
+    if (m) {
+      try {
+        const claims = await verifyExtToken(m[1]);
+        userId = claims?.sub ?? null;
+      } catch {
+        // ignore for MVP
+      }
+    }
 
     const {
       model_url,
@@ -60,97 +73,100 @@ export async function POST(req: Request) {
       return withCors(req, NextResponse.json({ error: "missing_params" }, { status: 400 }));
     }
 
-    const modelUrlNorm = normalizeUrl(model_url);
-    const garmentUrlNorm = normalizeUrl(garment_url);
-    const modelHash = sha256Hex(modelUrlNorm);
-    const garmentHash = sha256Hex(garmentUrlNorm);
-    const keyHash = sha256Hex(`${modelHash}|${garmentHash}`);
+    const modelUrl = normalize(model_url);
+    const garmentUrl = normalize(garment_url);
+    const keyHash = sha256Hex(`${sha256Hex(modelUrl)}|${sha256Hex(garmentUrl)}`);
 
+    // Cache hit?
     const existing = await prisma.tryOnResult.findUnique({ where: { keyHash } });
     if (existing?.status === "completed" && existing.resultUrl) {
-      return withCors(req, NextResponse.json({ cached: true, result_url: existing.resultUrl, id: existing.id }));
+      return withCors(
+        req,
+        NextResponse.json({ cached: true, result_url: existing.resultUrl, id: existing.id }, { status: 200 })
+      );
     }
 
+    // Create row if needed
     const row =
       existing ??
       (await prisma.tryOnResult.create({
         data: {
-          userId: claims.sub ?? null,
-          modelUrl: modelUrlNorm,
-          garmentUrl: garmentUrlNorm,
-          modelHash,
-          garmentHash,
+          userId,
+          modelUrl,
+          garmentUrl,
+          modelHash: sha256Hex(modelUrl),
+          garmentHash: sha256Hex(garmentUrl),
           keyHash,
           status: "pending",
         },
       }));
 
-    let apiJobId = row.apiJobId;
-    if (!apiJobId) {
-      const runRes = await fetch(`${FASHN_API}/run`, {
+    // Start job if we haven’t
+    let jobId = row.apiJobId;
+    if (!jobId) {
+      const runResp = await fetch(`${FASHN_API}/run`, {
         method: "POST",
         headers: { Authorization: `Bearer ${FASHN_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model_name: "tryon-v1.6",
-          inputs: { model_image: modelUrlNorm, garment_image: garmentUrlNorm },
+          inputs: { model_image: modelUrl, garment_image: garmentUrl },
           category,
           moderation_level,
           mode,
         }),
-      }).then((r) => r.json());
-
-      if (!runRes?.id) {
+      });
+      const runJson = await runResp.json().catch(() => ({}));
+      if (!runResp.ok || !runJson?.id) {
         await prisma.tryOnResult.update({
           where: { id: row.id },
-          data: { status: "failed", error: JSON.stringify(runRes) },
+          data: { status: "failed", error: JSON.stringify(runJson || { status: runResp.status }) },
         });
         return withCors(
           req,
-          NextResponse.json({ error: "fashn_run_failed", details: runRes }, { status: 502 })
+          NextResponse.json({ error: "fashn_run_failed", details: runJson }, { status: 502 })
         );
       }
-
-      apiJobId = runRes.id as string;
-      await prisma.tryOnResult.update({ where: { id: row.id }, data: { apiJobId } });
+      jobId = runJson.id as string;
+      await prisma.tryOnResult.update({ where: { id: row.id }, data: { apiJobId: jobId } });
     }
 
-    const pollUrl = `${FASHN_API}/status/${apiJobId}`;
+    // Short poll (up to ~30s)
+    const pollUrl = `${FASHN_API}/status/${jobId}`;
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      const statusRes = await fetch(pollUrl, {
-        headers: { Authorization: `Bearer ${FASHN_KEY}` },
-      }).then((r) => r.json());
+      const sRes = await fetch(pollUrl, { headers: { Authorization: `Bearer ${FASHN_KEY}` } });
+      const sJson = await sRes.json().catch(() => ({}));
 
-      if (statusRes?.status === "completed") {
-        const outUrl: string | undefined = statusRes?.output?.[0];
-        if (!outUrl) {
+      if (sJson?.status === "completed") {
+        const out: string | undefined = sJson?.output?.[0];
+        if (!out) {
           await prisma.tryOnResult.update({
             where: { id: row.id },
             data: { status: "failed", error: "completed_no_output" },
           });
           return withCors(req, NextResponse.json({ error: "completed_but_no_output" }, { status: 502 }));
         }
-
         await prisma.tryOnResult.update({
           where: { id: row.id },
-          data: { status: "completed", resultUrl: outUrl },
+          data: { status: "completed", resultUrl: out },
         });
-
-        return withCors(req, NextResponse.json({ cached: false, result_url: outUrl, id: row.id }));
+        return withCors(req, NextResponse.json({ cached: false, result_url: out, id: row.id }, { status: 200 }));
       }
 
-      if (statusRes?.status === "failed") {
+      if (sJson?.status === "failed") {
         await prisma.tryOnResult.update({
           where: { id: row.id },
-          data: { status: "failed", error: JSON.stringify(statusRes?.error ?? statusRes) },
+          data: { status: "failed", error: JSON.stringify(sJson?.error ?? sJson) },
         });
-        return withCors(req, NextResponse.json({ error: "fashn_failed", details: statusRes }, { status: 502 }));
+        return withCors(req, NextResponse.json({ error: "fashn_failed", details: sJson }, { status: 502 }));
       }
     }
 
+    // Still pending — let content.js repoll (your loader already waits)
     return withCors(req, NextResponse.json({ pending: true, id: row.id }, { status: 202 }));
   } catch (e: any) {
-    // During MVP, surface error to help debug
+    console.error("[/api/tryon] error:", e?.message || e);
+    // MVP: surface message but never 500 without body
     return withCors(
       req,
       NextResponse.json({ error: "server_error", message: e?.message ?? "unknown" }, { status: 500 })

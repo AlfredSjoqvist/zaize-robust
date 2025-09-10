@@ -1,11 +1,12 @@
 //src/app/ext/highlighted/route.ts
+
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
-import { verifyExtToken } from "@/lib/ext-jwt";
 import { prisma } from "@/lib/prisma";
+import { verifyExtToken } from "@/lib/ext-jwt";
 
-/** Reflect caller origin and allow Authorization for preflight */
+/** CORS helper: reflect origin & allow Authorization */
 function withCors(req: Request, res: Response) {
   const origin = req.headers.get("Origin") || "*";
   const headers = new Headers(res.headers);
@@ -25,26 +26,32 @@ export async function GET(req: Request) {
   try {
     const auth = req.headers.get("authorization") || "";
     const m = auth.match(/^Bearer\s+(.+)$/i);
+
+    // MVP rule: if there’s no bearer or it’s invalid → just return {image:null} (no 500s)
     if (!m) {
-      return withCors(req, NextResponse.json({ error: "missing_bearer" }, { status: 401 }));
+      return withCors(req, NextResponse.json({ image: null }, { status: 200 }));
     }
 
-    const claims = await verifyExtToken(m[1]);
-    if (!claims) {
-      return withCors(req, NextResponse.json({ error: "invalid_token" }, { status: 401 }));
+    let userId: string | null = null;
+    try {
+      const claims = await verifyExtToken(m[1]);
+      userId = claims?.sub ?? null;
+    } catch {
+      return withCors(req, NextResponse.json({ image: null }, { status: 200 }));
+    }
+    if (!userId) {
+      return withCors(req, NextResponse.json({ image: null }, { status: 200 }));
     }
 
     const img = await prisma.image.findFirst({
-      where: { userId: claims.sub, kind: "full_body", primary: true },
+      where: { userId, kind: "full_body", primary: true },
       select: { id: true, url: true },
     });
 
-    return withCors(req, NextResponse.json({ image: img ?? null }));
+    return withCors(req, NextResponse.json({ image: img ?? null }, { status: 200 }));
   } catch (e: any) {
-    // Optional: surface message during MVP to debug
-    return withCors(
-      req,
-      NextResponse.json({ error: "server_error", message: e?.message ?? "unknown" }, { status: 500 })
-    );
+    // MVP: never leak a 500 to the extension — return null image
+    console.error("[/ext/highlighted] error:", e?.message || e);
+    return withCors(req, NextResponse.json({ image: null }, { status: 200 }));
   }
 }
