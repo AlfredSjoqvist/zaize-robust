@@ -1,3 +1,5 @@
+//src/app/ext/handshake/page.tsx
+
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/server/auth";
 import { signExtToken } from "@/lib/ext-jwt";

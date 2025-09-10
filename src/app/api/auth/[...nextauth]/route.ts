@@ -1,3 +1,5 @@
+//src/app/api/auth/[...nextauth]/route.ts
+
 // Force Node runtime (Prisma cannot run on Edge)
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

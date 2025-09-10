@@ -1,3 +1,5 @@
+//src/app/api/images/full-body/select/route.ts
+
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
