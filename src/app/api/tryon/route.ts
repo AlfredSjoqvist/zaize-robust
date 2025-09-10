@@ -7,23 +7,16 @@ import { verifyExtToken } from "@/lib/ext-jwt";
 import { normalizeUrl, sha256Hex } from "@/lib/hash";
 
 const FASHN_API = "https://api.fashn.ai/v1";
-const FASHN_KEY = process.env.FASHN_API_KEY!;
+const FASHN_KEY = process.env.FASHN_API_KEY;
 
-/** CORS allowing your retail sites (demo) */
 function withCors(req: Request, res: Response) {
-  const origin = req.headers.get("Origin") || "";
-  const ALLOW = new Set<string>([
-    "https://www.bjornborg.com",
-    // add other demo origins if needed
-  ]);
+  const origin = req.headers.get("Origin") || "*";
   const headers = new Headers(res.headers);
-  if (ALLOW.has(origin)) {
-    headers.set("Access-Control-Allow-Origin", origin);
-    headers.set("Access-Control-Allow-Credentials", "true");
-    headers.set("Vary", "Origin");
-    headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-  }
+  headers.set("Access-Control-Allow-Origin", origin);
+  headers.set("Vary", "Origin");
+  headers.set("Access-Control-Allow-Credentials", "true");
+  headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
   return new Response(res.body, { status: res.status, headers });
 }
 
@@ -41,16 +34,19 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    // 🔐 MVP auth: extension JWT ONLY (no NextAuth cookie check)
+    if (!FASHN_KEY) {
+      return withCors(
+        req,
+        NextResponse.json({ error: "missing_env", message: "FASHN_API_KEY not set" }, { status: 500 })
+      );
+    }
+
     const auth = req.headers.get("authorization") || "";
     const m = auth.match(/^Bearer\s+(.+)$/i);
-    if (!m) {
-      return withCors(req, NextResponse.json({ error: "missing_bearer" }, { status: 401 }));
-    }
+    if (!m) return withCors(req, NextResponse.json({ error: "missing_bearer" }, { status: 401 }));
+
     const claims = await verifyExtToken(m[1]);
-    if (!claims) {
-      return withCors(req, NextResponse.json({ error: "invalid_token" }, { status: 401 }));
-    }
+    if (!claims) return withCors(req, NextResponse.json({ error: "invalid_token" }, { status: 401 }));
 
     const {
       model_url,
@@ -70,21 +66,16 @@ export async function POST(req: Request) {
     const garmentHash = sha256Hex(garmentUrlNorm);
     const keyHash = sha256Hex(`${modelHash}|${garmentHash}`);
 
-    // Cache hit?
     const existing = await prisma.tryOnResult.findUnique({ where: { keyHash } });
     if (existing?.status === "completed" && existing.resultUrl) {
-      return withCors(
-        req,
-        NextResponse.json({ cached: true, result_url: existing.resultUrl, id: existing.id })
-      );
+      return withCors(req, NextResponse.json({ cached: true, result_url: existing.resultUrl, id: existing.id }));
     }
 
-    // Create or reuse pending row
     const row =
       existing ??
       (await prisma.tryOnResult.create({
         data: {
-          userId: claims.sub, // optional
+          userId: claims.sub ?? null,
           modelUrl: modelUrlNorm,
           garmentUrl: garmentUrlNorm,
           modelHash,
@@ -94,7 +85,6 @@ export async function POST(req: Request) {
         },
       }));
 
-    // Submit to FASHN if needed
     let apiJobId = row.apiJobId;
     if (!apiJobId) {
       const runRes = await fetch(`${FASHN_API}/run`, {
@@ -114,17 +104,18 @@ export async function POST(req: Request) {
           where: { id: row.id },
           data: { status: "failed", error: JSON.stringify(runRes) },
         });
-        return withCors(req, NextResponse.json({ error: "fashn_run_failed", details: runRes }, { status: 502 }));
+        return withCors(
+          req,
+          NextResponse.json({ error: "fashn_run_failed", details: runRes }, { status: 502 })
+        );
       }
 
       apiJobId = runRes.id as string;
       await prisma.tryOnResult.update({ where: { id: row.id }, data: { apiJobId } });
     }
 
-    // Poll
     const pollUrl = `${FASHN_API}/status/${apiJobId}`;
-    const maxTries = 30;
-    for (let i = 0; i < maxTries; i++) {
+    for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const statusRes = await fetch(pollUrl, {
         headers: { Authorization: `Bearer ${FASHN_KEY}` },
@@ -159,6 +150,10 @@ export async function POST(req: Request) {
 
     return withCors(req, NextResponse.json({ pending: true, id: row.id }, { status: 202 }));
   } catch (e: any) {
-    return withCors(req, NextResponse.json({ error: "server_error", message: e?.message }, { status: 500 }));
+    // During MVP, surface error to help debug
+    return withCors(
+      req,
+      NextResponse.json({ error: "server_error", message: e?.message ?? "unknown" }, { status: 500 })
+    );
   }
 }
