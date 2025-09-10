@@ -4,19 +4,17 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyExtToken } from "@/lib/ext-jwt";
-import { getServerSession, type Session } from "next-auth";
-import { authOptions } from "@/server/auth";
 import { normalizeUrl, sha256Hex } from "@/lib/hash";
 
 const FASHN_API = "https://api.fashn.ai/v1";
 const FASHN_KEY = process.env.FASHN_API_KEY!;
 
-/** CORS allowing your retail sites + credentials so logout is respected */
+/** CORS allowing your retail sites (demo) */
 function withCors(req: Request, res: Response) {
   const origin = req.headers.get("Origin") || "";
   const ALLOW = new Set<string>([
     "https://www.bjornborg.com",
-    // add other partner origins here
+    // add other demo origins if needed
   ]);
   const headers = new Headers(res.headers);
   if (ALLOW.has(origin)) {
@@ -43,24 +41,17 @@ type Body = {
 
 export async function POST(req: Request) {
   try {
-    // 1) Auth: ext token (header) AND live NextAuth session (cookie)
+    // 🔐 MVP auth: extension JWT ONLY (no NextAuth cookie check)
     const auth = req.headers.get("authorization") || "";
     const m = auth.match(/^Bearer\s+(.+)$/i);
     if (!m) {
       return withCors(req, NextResponse.json({ error: "missing_bearer" }, { status: 401 }));
     }
-    const claims = await verifyExtToken(m[1]).catch(() => null);
-    if (!claims || claims.scope !== "read:highlighted" || !claims.sub) {
+    const claims = await verifyExtToken(m[1]);
+    if (!claims) {
       return withCors(req, NextResponse.json({ error: "invalid_token" }, { status: 401 }));
     }
 
-    // 👇 Make Session type explicit so TS knows `.user` exists
-    const session = (await getServerSession(authOptions)) as Session | null;
-    if (!session?.user) {
-      return withCors(req, NextResponse.json({ error: "no_web_session" }, { status: 401 }));
-    }
-
-    // 2) Read and normalize input
     const {
       model_url,
       garment_url,
@@ -79,7 +70,7 @@ export async function POST(req: Request) {
     const garmentHash = sha256Hex(garmentUrlNorm);
     const keyHash = sha256Hex(`${modelHash}|${garmentHash}`);
 
-    // 3) Cache hit?
+    // Cache hit?
     const existing = await prisma.tryOnResult.findUnique({ where: { keyHash } });
     if (existing?.status === "completed" && existing.resultUrl) {
       return withCors(
@@ -88,12 +79,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // 4) Create or reuse pending row
+    // Create or reuse pending row
     const row =
       existing ??
       (await prisma.tryOnResult.create({
         data: {
-          userId: (session.user as any).id as string | undefined, // if you store userId
+          userId: claims.sub, // optional
           modelUrl: modelUrlNorm,
           garmentUrl: garmentUrlNorm,
           modelHash,
@@ -103,7 +94,7 @@ export async function POST(req: Request) {
         },
       }));
 
-    // 5) Submit to FASHN if needed
+    // Submit to FASHN if needed
     let apiJobId = row.apiJobId;
     if (!apiJobId) {
       const runRes = await fetch(`${FASHN_API}/run`, {
@@ -130,7 +121,7 @@ export async function POST(req: Request) {
       await prisma.tryOnResult.update({ where: { id: row.id }, data: { apiJobId } });
     }
 
-    // 6) Poll for completion
+    // Poll
     const pollUrl = `${FASHN_API}/status/${apiJobId}`;
     const maxTries = 30;
     for (let i = 0; i < maxTries; i++) {
@@ -166,11 +157,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 7) Timeout (still pending)
-    return withCors(
-      req,
-      NextResponse.json({ pending: true, id: row.id, message: "still_processing" }, { status: 202 })
-    );
+    return withCors(req, NextResponse.json({ pending: true, id: row.id }, { status: 202 }));
   } catch (e: any) {
     return withCors(req, NextResponse.json({ error: "server_error", message: e?.message }, { status: 500 }));
   }
