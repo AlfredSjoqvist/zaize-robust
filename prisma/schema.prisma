@@ -73,3 +73,21 @@ model Image {
 
   @@index([userId, kind])
 }
+
+
+model TryOnResult {
+  id           String   @id @default(cuid())
+  userId       String?  // optional; store if you want to tie to a user
+  modelUrl     String
+  garmentUrl   String
+  modelHash    String
+  garmentHash  String
+  keyHash      String   @unique // sha256(modelHash + '|' + garmentHash)
+  resultUrl    String?  // set when completed
+  status       String   @default("pending") // "pending" | "completed" | "failed"
+  apiJobId     String?  // FASHN job id
+  error        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
