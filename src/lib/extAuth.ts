@@ -21,10 +21,11 @@ export async function verifyExtBearer(req: Request): Promise<ExtUser | null> {
     const secret = process.env.EXT_JWT_SECRET;
     if (!secret) throw new Error("EXT_JWT_SECRET missing");
 
-    const decoded = jwt.verify(token, secret) as ExtUser & jwt.JwtPayload;
-    if (!decoded?.uid) return null;
+    const decoded = jwt.verify(token, secret) as jwt.JwtPayload & { uid?: string; sub?: string; email?: string | null };
+    const uid = decoded.uid || decoded.sub || null;
+    if (!uid) return null;
+    return { uid, email: decoded.email ?? null };
 
-    return { uid: decoded.uid, email: decoded.email ?? null };
   } catch {
     return null;
   }
