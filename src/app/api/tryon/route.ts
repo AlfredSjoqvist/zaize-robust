@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyExtToken } from "@/lib/ext-jwt";
-import { getServerSession } from "next-auth";
+import { getServerSession, type Session } from "next-auth";
 import { authOptions } from "@/server/auth";
 import { normalizeUrl, sha256Hex } from "@/lib/hash";
 
@@ -36,7 +36,6 @@ export async function OPTIONS(req: Request) {
 type Body = {
   model_url: string;
   garment_url: string;
-  // optional knobs if you want to tweak
   category?: "auto";
   moderation_level?: "none" | "standard";
   mode?: "balanced" | "fast" | "high-quality";
@@ -54,14 +53,21 @@ export async function POST(req: Request) {
     if (!claims || claims.scope !== "read:highlighted" || !claims.sub) {
       return withCors(req, NextResponse.json({ error: "invalid_token" }, { status: 401 }));
     }
-    const session = await getServerSession(authOptions as any);
+
+    // 👇 Make Session type explicit so TS knows `.user` exists
+    const session = (await getServerSession(authOptions)) as Session | null;
     if (!session?.user) {
       return withCors(req, NextResponse.json({ error: "no_web_session" }, { status: 401 }));
     }
 
     // 2) Read and normalize input
-    const { model_url, garment_url, category = "auto", moderation_level = "none", mode = "balanced" } =
-      (await req.json()) as Body;
+    const {
+      model_url,
+      garment_url,
+      category = "auto",
+      moderation_level = "none",
+      mode = "balanced",
+    } = (await req.json()) as Body;
 
     if (!model_url || !garment_url) {
       return withCors(req, NextResponse.json({ error: "missing_params" }, { status: 400 }));
@@ -73,25 +79,21 @@ export async function POST(req: Request) {
     const garmentHash = sha256Hex(garmentUrlNorm);
     const keyHash = sha256Hex(`${modelHash}|${garmentHash}`);
 
-    // 3) Fast path: cache hit
+    // 3) Cache hit?
     const existing = await prisma.tryOnResult.findUnique({ where: { keyHash } });
     if (existing?.status === "completed" && existing.resultUrl) {
       return withCors(
         req,
-        NextResponse.json({
-          cached: true,
-          result_url: existing.resultUrl,
-          id: existing.id,
-        })
+        NextResponse.json({ cached: true, result_url: existing.resultUrl, id: existing.id })
       );
     }
 
-    // 4) Create or reuse a pending row (idempotent upsert)
+    // 4) Create or reuse pending row
     const row =
       existing ??
       (await prisma.tryOnResult.create({
         data: {
-          userId: session.user.id as string,
+          userId: (session.user as any).id as string | undefined, // if you store userId
           modelUrl: modelUrlNorm,
           garmentUrl: garmentUrlNorm,
           modelHash,
@@ -101,15 +103,12 @@ export async function POST(req: Request) {
         },
       }));
 
-    // 5) If first time (no job), submit to FASHN
+    // 5) Submit to FASHN if needed
     let apiJobId = row.apiJobId;
     if (!apiJobId) {
       const runRes = await fetch(`${FASHN_API}/run`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${FASHN_KEY}`,
-          "Content-Type": "application/json",
-        },
+        headers: { Authorization: `Bearer ${FASHN_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           model_name: "tryon-v1.6",
           inputs: { model_image: modelUrlNorm, garment_image: garmentUrlNorm },
@@ -120,7 +119,6 @@ export async function POST(req: Request) {
       }).then((r) => r.json());
 
       if (!runRes?.id) {
-        // Mark failed and surface the error
         await prisma.tryOnResult.update({
           where: { id: row.id },
           data: { status: "failed", error: JSON.stringify(runRes) },
@@ -132,9 +130,9 @@ export async function POST(req: Request) {
       await prisma.tryOnResult.update({ where: { id: row.id }, data: { apiJobId } });
     }
 
-    // 6) Poll FASHN until complete or fail (bounded)
+    // 6) Poll for completion
     const pollUrl = `${FASHN_API}/status/${apiJobId}`;
-    const maxTries = 30; // ~30s if 1s interval
+    const maxTries = 30;
     for (let i = 0; i < maxTries; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const statusRes = await fetch(pollUrl, {
@@ -156,14 +154,7 @@ export async function POST(req: Request) {
           data: { status: "completed", resultUrl: outUrl },
         });
 
-        return withCors(
-          req,
-          NextResponse.json({
-            cached: false,
-            result_url: outUrl,
-            id: row.id,
-          })
-        );
+        return withCors(req, NextResponse.json({ cached: false, result_url: outUrl, id: row.id }));
       }
 
       if (statusRes?.status === "failed") {
@@ -175,7 +166,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 7) Timed out — leave row pending; client can re-call (will resume)
+    // 7) Timeout (still pending)
     return withCors(
       req,
       NextResponse.json({ pending: true, id: row.id, message: "still_processing" }, { status: 202 })
