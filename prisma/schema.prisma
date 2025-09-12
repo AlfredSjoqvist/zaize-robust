@@ -119,3 +119,17 @@ model ExtToken {
   revoked    Boolean  @default(false)
   createdAt  DateTime @default(now())
 }
+
+model ApiUsage {
+  id         String   @id @default(cuid())
+  at         DateTime @default(now())
+  route      String
+  method     String
+  status     Int
+  userId     String
+  licenseId  String?
+  tokenJti   String?
+  costMs     Int?
+  note       String?
+  ip         String?
+}
