@@ -1,34 +1,60 @@
-// app/api/admin/create-keys/route.ts
+// src/app/api/admin/create-keys/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { hashKey } from "@/lib/license";
+import { genKey, hashKey } from "@/lib/license";
 
-function genKey() {
-  const base32 = "ABCDEFGHJKLMNPQRSTUVWXZY23456789"; // no 0,O,1,I
-  const rnd = (n: number) => Array.from({ length: n }, () => base32[Math.floor(Math.random()*base32.length)]).join("");
-  return `ZAIZE-${rnd(5)}-${rnd(5)}-${rnd(5)}-${rnd(5)}`;
+export const runtime = "nodejs"; // IMPORTANT for Prisma + node:crypto
+
+function json(data: any, status = 200) {
+  return new NextResponse(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get("authorization") || "";
-  const [, sec] = auth.split(" ");
-  if (sec !== process.env.ADMIN_MINT_SECRET) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  try {
+    // Accept either "Bearer <secret>" or just "<secret>"
+    const rawAuth =
+      req.headers.get("authorization") || req.headers.get("Authorization") || "";
+    const token = rawAuth.startsWith("Bearer ")
+      ? rawAuth.slice(7).trim()
+      : rawAuth.trim();
 
-  const { count = 1, maxActivations = 1, expiresAt, label, userId, email } = await req.json().catch(() => ({}));
-  const keys: string[] = [];
-  for (let i = 0; i < count; i++) {
-    const raw = genKey();
-    await prisma.licenseKey.create({
-      data: {
-        codeHash: hashKey(raw),
-        maxActivations,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
-        label: label ?? null,
-        userId: userId ?? null,
-        email: email ?? null,
-      },
-    });
-    keys.push(raw);
+    const expected = process.env.ADMIN_MINT_SECRET;
+    if (!expected) return json({ error: "server_misconfig: ADMIN_MINT_SECRET" }, 500);
+    if (token !== expected) return json({ error: "forbidden" }, 403);
+
+    const body = await req.json().catch(() => ({} as any));
+    const count = Number(body.count ?? 1);
+    const maxActivations = Number(body.maxActivations ?? 1);
+    const expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
+    const label = body.label ?? null;
+    const userId = body.userId ?? null;
+    const email = body.email ?? null;
+
+    if (!Number.isFinite(count) || count < 1) {
+      return json({ error: "invalid_count" }, 400);
+    }
+
+    const keys: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const raw = genKey();              // pretty human key
+      const codeHash = hashKey(raw);     // store only hash
+      await prisma.licenseKey.create({
+        data: { codeHash, maxActivations, expiresAt, label, userId, email },
+      });
+      keys.push(raw);
+    }
+
+    return json({ keys }, 200);
+  } catch (e: any) {
+    console.error("[create-keys] error:", e);
+    return json({ error: "server_error", details: String(e?.message || e) }, 500);
   }
-  return NextResponse.json({ keys });
+}
+
+// Optional: allow GET to quickly check the route is alive
+export async function GET() {
+  return new NextResponse("OK\n", { status: 200 });
 }

@@ -22,3 +22,10 @@ export async function consumeLicense(rawKey: string, deviceId: string, email?: s
   });
   return key;
 }
+
+export function genKey() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXZY23456789"; // no 0,O,1,I
+  const rnd = (n: number) =>
+    Array.from({ length: n }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
+  return `ZAIZE-${rnd(5)}-${rnd(5)}-${rnd(5)}-${rnd(5)}`;
+}
