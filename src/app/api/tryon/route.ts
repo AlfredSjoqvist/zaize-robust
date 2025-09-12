@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { withCors, preflight } from "@/lib/cors";
 import { verifyExtBearer } from "@/lib/extAuth";
 import { prisma } from "@/lib/prisma";
@@ -156,10 +156,12 @@ export async function POST(req: Request) {
   );
 }
 
-export function OPTIONS(req: Request) {
-  const origin = req.headers.get("origin") || "*";
-  return preflight(origin);
+export function OPTIONS(req: NextRequest) {
+  const origin = req.headers.get("origin");
+  const requested = req.headers.get("access-control-request-headers");
+  return preflight(origin, requested); // your cors.ts helper
 }
+
 
 // --- helpers ---
 async function safeJson(r: Response) {
