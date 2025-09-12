@@ -120,16 +120,20 @@ model ExtToken {
   createdAt  DateTime @default(now())
 }
 
+
 model ApiUsage {
-  id         String   @id @default(cuid())
-  at         DateTime @default(now())
-  route      String
-  method     String
-  status     Int
-  userId     String
-  licenseId  String?
-  tokenJti   String?
-  costMs     Int?
-  note       String?
-  ip         String?
+  id           String   @id @default(cuid())
+  at           DateTime @default(now())
+  route        String
+  method       String
+  status       Int
+  userId       String
+  licenseId    String?      // already present in your setup
+  tokenJti     String?
+  predictionId String?      // <-- add this
+  costMs       Int?
+  note         String?
+  ip           String?
 }
+
+

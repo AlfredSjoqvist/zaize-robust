@@ -13,6 +13,7 @@ export function OPTIONS(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin");
   const { productKey, email, deviceId } = await req.json().catch(() => ({}));
+
   if (!productKey || !deviceId) {
     return withCors(NextResponse.json({ error: "missing_params" }, { status: 400 }), origin);
   }

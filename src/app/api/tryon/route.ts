@@ -13,21 +13,14 @@ export async function POST(req: Request) {
 
   const user = await verifyExtBearer(req);
   if (!user) {
-    // Not logging unauthorized because ApiUsage.userId is required
-    return withCors(
-      NextResponse.json({ error: "unauthorized" }, { status: 401 }),
-      origin
-    );
+    return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }), origin);
   }
 
   const t0 = Date.now();
-  const ip =
-    req.headers.get("x-forwarded-for") ||
-    req.headers.get("x-real-ip") ||
-    null;
+  const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || null;
 
-  // small helper to avoid repetition
-  const log = async (status: number, note?: string, costOverride?: number) => {
+  // add optional predictionId to logs
+  const log = async (status: number, note?: string, predictionId?: string | null, costOverride?: number) => {
     try {
       await logUsage({
         route: "/api/tryon",
@@ -36,6 +29,7 @@ export async function POST(req: Request) {
         userId: user.uid,
         licenseId: (user as any).licenseId ?? null,
         tokenJti: (user as any).jti ?? null,
+        predictionId: predictionId ?? null, // <-- here
         costMs: typeof costOverride === "number" ? costOverride : Date.now() - t0,
         note,
         ip,
@@ -47,21 +41,15 @@ export async function POST(req: Request) {
   try {
     body = await req.json();
   } catch {
-    await log(400, "invalid_json");
-    return withCors(
-      NextResponse.json({ error: "invalid_json" }, { status: 400 }),
-      origin
-    );
+    await log(400, "invalid_json", null);
+    return withCors(NextResponse.json({ error: "invalid_json" }, { status: 400 }), origin);
   }
 
   const model_url = String(body?.model_url || "");
   const garment_url = String(body?.garment_url || "");
   if (!model_url || !garment_url) {
-    await log(400, "missing_params");
-    return withCors(
-      NextResponse.json({ error: "missing_params" }, { status: 400 }),
-      origin
-    );
+    await log(400, "missing_params", null);
+    return withCors(NextResponse.json({ error: "missing_params" }, { status: 400 }), origin);
   }
 
   const modelUrl = normalizeUrl(model_url);
@@ -71,45 +59,32 @@ export async function POST(req: Request) {
   const keyHash = makeKeyHash(user.uid, modelUrl, garmentUrl);
 
   // 1) Cache fast path by unique keyHash
-  const cached = await prisma.tryOnResult.findUnique({
-    where: { keyHash },
-  });
+  const cached = await prisma.tryOnResult.findUnique({ where: { keyHash } });
 
   if (cached?.status === "completed" && cached.resultUrl) {
     const res = NextResponse.json(
-      {
-        id: cached.apiJobId || "",
-        status: "completed",
-        result_url: cached.resultUrl,
-        key_hash: keyHash,
-      },
+      { id: cached.apiJobId || "", status: "completed", result_url: cached.resultUrl, key_hash: keyHash },
       { status: 200 }
     );
-    await log(200, "cache_hit");
+    await log(200, "cache_hit", cached.apiJobId || null);     // <-- include job id
     return withCors(res, origin);
   }
 
   if (cached?.status === "failed") {
     const res = NextResponse.json(
-      {
-        id: cached.apiJobId || "",
-        status: "failed",
-        error: cached.error || "failed",
-        key_hash: keyHash,
-      },
+      { id: cached.apiJobId || "", status: "failed", error: cached.error || "failed", key_hash: keyHash },
       { status: 200 }
     );
-    await log(200, "cache_failed");
+    await log(200, "cache_failed", cached.apiJobId || null);  // <-- include job id
     return withCors(res, origin);
   }
 
   if (cached?.status === "pending" && cached.apiJobId) {
-    // Job already running
     const res = NextResponse.json(
       { id: cached.apiJobId, status: "processing", key_hash: keyHash },
       { status: 202 }
     );
-    await log(202, "pending_existing_job");
+    await log(202, "pending_existing_job", cached.apiJobId);  // <-- include job id
     return withCors(res, origin);
   }
 
@@ -122,10 +97,7 @@ export async function POST(req: Request) {
     },
     body: JSON.stringify({
       model_name: "tryon-v1.6",
-      inputs: {
-        model_image: modelUrl,
-        garment_image: garmentUrl,
-      },
+      inputs: { model_image: modelUrl, garment_image: garmentUrl },
       category: "auto",
       moderation_level: "none",
       mode: "balanced",
@@ -134,22 +106,16 @@ export async function POST(req: Request) {
 
   if (!runRes.ok) {
     const err = await safeJson(runRes);
-    const res = NextResponse.json(
-      { error: "server_error", details: err || null },
-      { status: 500 }
-    );
-    await log(500, `upstream_fail_${runRes.status}`);
+    const res = NextResponse.json({ error: "server_error", details: err || null }, { status: 500 });
+    await log(500, `upstream_fail_${runRes.status}`, null);
     return withCors(res, origin);
   }
 
   const runData: any = await runRes.json();
   const jobId = runData?.id as string | undefined;
   if (!jobId) {
-    const res = NextResponse.json(
-      { error: "no_job_id" },
-      { status: 500 }
-    );
-    await log(500, "no_job_id");
+    const res = NextResponse.json({ error: "no_job_id" }, { status: 500 });
+    await log(500, "no_job_id", null);
     return withCors(res, origin);
   }
 
@@ -173,11 +139,8 @@ export async function POST(req: Request) {
     },
   });
 
-  const res = NextResponse.json(
-    { id: jobId, status: "processing", key_hash: keyHash },
-    { status: 202 }
-  );
-  await log(202, "job_started");
+  const res = NextResponse.json({ id: jobId, status: "processing", key_hash: keyHash }, { status: 202 });
+  await log(202, "job_started", jobId);      // <-- include new job id
   return withCors(res, origin);
 }
 
@@ -187,11 +150,6 @@ export function OPTIONS(req: NextRequest) {
   return preflight(origin, requested);
 }
 
-// --- helpers ---
 async function safeJson(r: Response) {
-  try {
-    return await r.json();
-  } catch {
-    return null;
-  }
+  try { return await r.json(); } catch { return null; }
 }
