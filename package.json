@@ -40,7 +40,8 @@
   },
   "pnpm": {
     "overrides": {
-      "strip-ansi@^7": "7.1.2"
+      "strip-ansi@^7": "7.1.2",
+      "ansi-styles": "6.2.1"
     }
   }
 }
