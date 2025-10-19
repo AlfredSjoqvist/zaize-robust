@@ -115,13 +115,12 @@ export async function POST(req: NextRequest) {
   let browser: Browser | null = null;
   try {
     // Only pass a packageRoot on Vercel if we *actually detected* one
-    const packageRoot =
-      process.env.VERCEL && detectedPackageRoot ? detectedPackageRoot : undefined;
-
+    // AFTER (let Sparticuz figure it out once the package is INCLUDED)
     const executablePath =
-      process.env.NODE_ENV === "development"
+    process.env.NODE_ENV === "development"
         ? undefined
-        : await chromium.executablePath(packageRoot);
+        : await chromium.executablePath();
+
 
     if (debug && debugInfo) {
       (debugInfo as any).executablePath = executablePath;
