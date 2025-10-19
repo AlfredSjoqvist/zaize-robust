@@ -33,17 +33,21 @@ export async function POST(req: NextRequest) {
   const origin = req.headers.get("origin") || "*";
 
   // --- Auth (same pattern as your /api/tryon) ---
-  const user = await verifyExtBearer(req as unknown as Request);
-  if (!user) {
+  let user: any = null;
+    try {
+    user = await verifyExtBearer(req as unknown as Request);
+    } catch (_) {
+    user = null;
+    }
 
+    if (!user) {
+    const dev = req.headers.get("x-dev-uid");
+    if (!dev) {
+        return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }), origin);
+    }
+    // dev bypass OK → fall through (do NOT return here)
+}
 
-  const dev = req.headers.get("x-dev-uid");
-  if (!dev) {
-    return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }), origin);
-  }
-  
-    return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }), origin);
-  }
 
   // We accept either:
   // (A) application/json { image_url, end_user, size_guide }
