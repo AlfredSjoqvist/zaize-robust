@@ -1,12 +1,12 @@
 {
   "functions": {
     "app/api/**/route.ts": {
-      "includeFiles": ["node_modules/@sparticuz/chromium/bin/**"],
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
       "memory": 2048,
       "maxDuration": 60
     },
-    "api/**.ts": {
-      "includeFiles": ["node_modules/@sparticuz/chromium/bin/**"],
+    "api/**/*.ts": {
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
       "memory": 2048,
       "maxDuration": 60
     }
