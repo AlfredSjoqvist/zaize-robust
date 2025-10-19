@@ -1,3 +1,4 @@
+// src/app/api/scrape/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import chromium from "@sparticuz/chromium";
@@ -8,6 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { createHash } from "crypto";
 import fs from "node:fs";
 import path from "node:path";
+import "@sparticuz/chromium";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -18,12 +20,52 @@ const Body = z.object({
   debug: z.boolean().optional(),
 });
 
+// Safe readdir helper for debug
 function listDirSafe(p: string) {
   try {
     return fs.readdirSync(p);
   } catch (e: any) {
     return { error: e?.message || String(e) };
   }
+}
+
+/**
+ * Try to find where @sparticuz/chromium actually lives in the deployed bundle.
+ * We try, in order:
+ *  - require.resolve() of the package entry, then walk up to its directory
+ *  - common lambda paths under /var/task
+ *  - fall back to undefined (let chromium decide)
+ */
+function getChromiumPackageRoot(): { root?: string; checked: string[] } {
+  const checked: string[] = [];
+
+  // 1) Resolve the installed module entry (works both locally and in lambda)
+  try {
+    // This resolves to something like .../@sparticuz/chromium/dist/cjs/index.cjs
+    // or .../dist/api.js — we just need its parent dir.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const resolved = require.resolve("@sparticuz/chromium");
+    const root = path.dirname(resolved);
+    checked.push(resolved, root, path.join(root, "bin"));
+    if (fs.existsSync(path.join(root, "bin"))) return { root, checked };
+  } catch (e) {
+    checked.push("require.resolve(@sparticuz/chromium) failed");
+  }
+
+  // 2) Common lambda locations
+  for (const candidate of [
+    "/var/task/node_modules/@sparticuz/chromium",
+    "/var/task/.next/server/chunks/ssr/node_modules/@sparticuz/chromium",
+    "/var/task/.next/server/app/api/scrape/node_modules/@sparticuz/chromium",
+  ]) {
+    checked.push(candidate, path.join(candidate, "bin"));
+    if (fs.existsSync(path.join(candidate, "bin"))) {
+      return { root: candidate, checked };
+    }
+  }
+
+  // 3) Give up — let chromium.executablePath() do its default
+  return { root: undefined, checked };
 }
 
 export async function POST(req: NextRequest) {
@@ -41,7 +83,7 @@ export async function POST(req: NextRequest) {
   const normalizedUrl = `${target.origin}${target.pathname}${target.search}`;
   const urlHash = createHash("sha256").update(normalizedUrl).digest("hex");
 
-  // ---- DEBUG SNAPSHOT (safe: no package.json imports)
+  // --- debug snapshot
   const guessedChromiumNodeModules = path.join(
     process.cwd(),
     "node_modules",
@@ -49,8 +91,8 @@ export async function POST(req: NextRequest) {
     "chromium",
     "bin"
   );
-  const errorPathFromLogs =
-    "/vercel/path0/node_modules/.pnpm/@sparticuz+chromium@141.0.0/node_modules/@sparticuz/chromium/bin";
+
+  const { root: detectedPackageRoot, checked } = getChromiumPackageRoot();
 
   const debugInfo = debug
     ? {
@@ -62,24 +104,24 @@ export async function POST(req: NextRequest) {
           guessedBinDir: guessedChromiumNodeModules,
           guessedBinDirExists: fs.existsSync(guessedChromiumNodeModules),
           guessedBinDirList: listDirSafe(guessedChromiumNodeModules),
-          errorPathFromLogs,
-          errorPathExists: fs.existsSync(errorPathFromLogs),
-          errorPathList: listDirSafe(errorPathFromLogs),
+          detectedPackageRoot,
+          detectedBinExists:
+            detectedPackageRoot ? fs.existsSync(path.join(detectedPackageRoot, "bin")) : false,
+          detectionChecked: checked,
         },
       }
     : undefined;
 
   let browser: Browser | null = null;
   try {
-// On Vercel, help chromium find its bin/** by passing the package root
-const packageRoot = process.env.VERCEL
-  ? "/var/task/node_modules/@sparticuz/chromium"
-  : undefined;
+    // Only pass a packageRoot on Vercel if we *actually detected* one
+    const packageRoot =
+      process.env.VERCEL && detectedPackageRoot ? detectedPackageRoot : undefined;
 
-const executablePath =
-  process.env.NODE_ENV === "development"
-    ? undefined
-    : await chromium.executablePath(packageRoot);
+    const executablePath =
+      process.env.NODE_ENV === "development"
+        ? undefined
+        : await chromium.executablePath(packageRoot);
 
     if (debug && debugInfo) {
       (debugInfo as any).executablePath = executablePath;
@@ -92,7 +134,9 @@ const executablePath =
     });
 
     const page = await browser.newPage();
-    await page.setUserAgent("Mozilla/5.0 (compatible; ZaizeScraper/1.0; +https://zaize.ai)");
+    await page.setUserAgent(
+      "Mozilla/5.0 (compatible; ZaizeScraper/1.0; +https://zaize.ai)"
+    );
 
     await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 45_000 });
     try { await page.waitForNetworkIdle({ timeout: 8_000 }); } catch {}
@@ -128,7 +172,11 @@ const executablePath =
     });
   } catch (err: any) {
     return NextResponse.json(
-      { ok: false, error: err?.message || "scrape-failed", ...(debug ? { __debug: debugInfo } : {}) },
+      {
+        ok: false,
+        error: err?.message || "scrape-failed",
+        ...(debug ? { __debug: debugInfo } : {}),
+      },
       { status: 500 }
     );
   } finally {
