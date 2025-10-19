@@ -1,22 +1,7 @@
 {
   "functions": {
-    "src/app/**/route.ts": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**",
-      "memory": 2048,
-      "maxDuration": 60
-    },
-    "src/app/**/route.js": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**",
-      "memory": 2048,
-      "maxDuration": 60
-    },
-    "app/**/route.ts": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**",
-      "memory": 2048,
-      "maxDuration": 60
-    },
-    "app/**/route.js": {
-      "includeFiles": "node_modules/@sparticuz/chromium/**",
+    "*": {
+      "includeFiles": "node_modules/**/@sparticuz/chromium/**",
       "memory": 2048,
       "maxDuration": 60
     }
