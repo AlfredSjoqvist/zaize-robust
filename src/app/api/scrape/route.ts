@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
   try {
 // On Vercel, help chromium find its bin/** by passing the package root
 const packageRoot = process.env.VERCEL
-  ? "/var/task/node_modules/@sparticuz/chromium"
+  ? "/node_modules/@sparticuz/chromium"
   : undefined;
 
 const executablePath =
