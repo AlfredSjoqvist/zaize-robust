@@ -1,9 +1,0 @@
-{
-  "functions": {
-    "*": {
-      "includeFiles": "node_modules/**/@sparticuz/chromium/**",
-      "memory": 2048,
-      "maxDuration": 60
-    }
-  }
-}
