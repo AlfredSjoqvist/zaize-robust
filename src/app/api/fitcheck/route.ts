@@ -35,6 +35,13 @@ export async function POST(req: NextRequest) {
   // --- Auth (same pattern as your /api/tryon) ---
   const user = await verifyExtBearer(req as unknown as Request);
   if (!user) {
+
+
+  const dev = req.headers.get("x-dev-uid");
+  if (!dev) {
+    return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }), origin);
+  }
+  
     return withCors(NextResponse.json({ error: "unauthorized" }, { status: 401 }), origin);
   }
 
