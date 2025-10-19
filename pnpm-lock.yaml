@@ -22,7 +22,7 @@ importers:
         specifier: ^0.10.22-rc.20250304
         version: 0.10.22-rc.20250304
       '@sparticuz/chromium':
-        specifier: ^121.0.0
+        specifier: 121.0.0
         version: 121.0.0
       clsx:
         specifier: 2.1.1
@@ -46,7 +46,7 @@ importers:
         specifier: ^1.23.0
         version: 1.23.0
       puppeteer-core:
-        specifier: ^21.7.0
+        specifier: 21.7.0
         version: 21.7.0
       react:
         specifier: 18.3.1
