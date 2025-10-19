@@ -1,12 +1,9 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
+export default {
+  output: "standalone",
   experimental: {
-    // force-include Sparticuz chromium assets in the lambda bundle
     outputFileTracingIncludes: {
-      'app/api/scrape/route': ['node_modules/@sparticuz/chromium/bin/**'],
-      'src/app/api/scrape/route': ['node_modules/@sparticuz/chromium/bin/**'],
+      'app/api/scrape/route': ['node_modules/**/@sparticuz/chromium/**'],
+      'src/app/api/scrape/route': ['node_modules/**/@sparticuz/chromium/**'],
     },
   },
 };
-
-export default nextConfig;
