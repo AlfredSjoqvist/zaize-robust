@@ -48,7 +48,7 @@
   "pnpm": {
     "overrides": {
       "strip-ansi@^7": "7.1.2",
-      "ansi-styles": "6.2.1"
+      "ansi-styles": "5.2.0"
     },
     "onlyBuiltDependencies": [
       "@sparticuz/chromium"
