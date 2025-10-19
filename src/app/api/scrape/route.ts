@@ -71,8 +71,15 @@ export async function POST(req: NextRequest) {
 
   let browser: Browser | null = null;
   try {
-    const executablePath =
-      process.env.NODE_ENV === "development" ? undefined : await chromium.executablePath();
+// On Vercel, help chromium find its bin/** by passing the package root
+const packageRoot = process.env.VERCEL
+  ? "/var/task/node_modules/@sparticuz/chromium"
+  : undefined;
+
+const executablePath =
+  process.env.NODE_ENV === "development"
+    ? undefined
+    : await chromium.executablePath(packageRoot);
 
     if (debug && debugInfo) {
       (debugInfo as any).executablePath = executablePath;
