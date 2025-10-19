@@ -136,4 +136,12 @@ model ApiUsage {
   ip           String?
 }
 
+model Scrape {
+  id           String   @id @default(cuid())
+  url          String
+  host         String
+  selectorUsed String?
+  payload      Json
+  createdAt    DateTime @default(now())
+}
 
