@@ -6,6 +6,7 @@ import puppeteer, { type Browser } from "puppeteer-core";
 import { getScraper } from "@/lib/scrapers";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
+import { createHash } from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -24,17 +25,19 @@ export async function POST(req: NextRequest) {
 
   const target = new URL(parse.data.url);
 
+  // Hash key: normalized full URL (origin + path + search)
+  const normalizedUrl = `${target.origin}${target.pathname}${target.search}`;
+  const urlHash = createHash("sha256").update(normalizedUrl).digest("hex");
+
   let browser: Browser | null = null;
   try {
-    // Use Sparticuz Chromium on Vercel; omit path in dev to let Puppeteer find Chrome
     const executablePath =
       process.env.NODE_ENV === "development" ? undefined : await chromium.executablePath();
 
     browser = await puppeteer.launch({
       args: chromium.args,
       executablePath,
-      headless: true, // <-- don't use chromium.headless
-      // defaultViewport: { width: 1280, height: 1024 }, // optional
+      headless: true, // keep simple; don't rely on chromium.headless typing
     });
 
     const page = await browser.newPage();
@@ -47,18 +50,25 @@ export async function POST(req: NextRequest) {
       timeout: 45_000,
     });
 
-    try {
-      await page.waitForNetworkIdle({ timeout: 8_000 });
-    } catch {}
+    try { await page.waitForNetworkIdle({ timeout: 8_000 }); } catch {}
 
     const scraper = getScraper(target.hostname);
     const { payload, selectorUsed } = await scraper({ page, url: target });
 
-    // Ensure payload conforms to Prisma.InputJsonValue (deep-serializable)
+    // Ensure Prisma JSON type compatibility
     const safePayload: Prisma.InputJsonValue = JSON.parse(JSON.stringify(payload));
 
-    const rec = await prisma.scrape.create({
-      data: {
+    // Upsert with the hash as the key
+    const rec = await prisma.scrape.upsert({
+      where: { id: urlHash },
+      create: {
+        id: urlHash,                // <-- hashed key
+        url: target.toString(),
+        host: target.hostname,
+        selectorUsed: selectorUsed ?? null,
+        payload: safePayload,
+      },
+      update: {
         url: target.toString(),
         host: target.hostname,
         selectorUsed: selectorUsed ?? null,
@@ -66,7 +76,13 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ ok: true, id: rec.id, host: rec.host, payload: rec.payload });
+    return NextResponse.json({
+      ok: true,
+      key: urlHash,
+      host: rec.host,
+      // echo payload so you can visually verify extraction
+      payload: rec.payload,
+    });
   } catch (err: any) {
     console.error(err);
     return NextResponse.json(
