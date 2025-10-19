@@ -27,13 +27,11 @@ function listDirSafe(p: string) {
   }
 }
 
-/**
- * In Vercel lambdas, Next often places node_modules under:
- *   /var/task/.next/server/chunks/**/node_modules/@sparticuz/chromium
- * rather than /var/task/node_modules.
- * We scan a few likely roots up to a small depth to find a folder whose name
- * ends with "@sparticuz/chromium" AND contains a "bin" subdir.
- */
+// In Vercel lambdas, Next often places node_modules under paths like:
+//   /var/task/.next/server/chunks/**/node_modules/@sparticuz/chromium
+// rather than /var/task/node_modules.
+// We scan a few likely roots up to a small depth to find a folder whose name
+// ends with "@sparticuz/chromium" AND contains a "bin" subdir.
 function findChromiumRoot(): { root?: string; checked: string[] } {
   const checked: string[] = [];
 
@@ -50,13 +48,11 @@ function findChromiumRoot(): { root?: string; checked: string[] } {
     checked.push("require.resolve(@sparticuz/chromium) failed");
   }
 
-  // Candidate search roots inside the lambda
   const roots = [
     "/var/task/.next/server",
     "/var/task",
   ];
 
-  // BFS to a small depth
   const maxDepth = 4;
   const queue: { dir: string; depth: number }[] = [];
 
@@ -68,7 +64,6 @@ function findChromiumRoot(): { root?: string; checked: string[] } {
     const { dir, depth } = queue.shift()!;
     checked.push(dir);
 
-    // quick match: ends with @sparticuz/chromium and has bin/
     if (dir.endsWith(path.join("@sparticuz", "chromium"))) {
       const bin = path.join(dir, "bin");
       checked.push(bin);
@@ -131,7 +126,6 @@ export async function POST(req: NextRequest) {
 
   let browser: Browser | null = null;
   try {
-    // If we found an actual package root (with bin/), give it to Sparticuz; else let it guess.
     const executablePath =
       process.env.NODE_ENV === "development"
         ? undefined
